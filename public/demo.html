@@ -1,0 +1,363 @@
+<html>
+	<head>
+		<title>Multiplayer Box2dWeb Demo by Chris Cavanagh</title>
+		<style>
+			body { font-family: Helvetica, Sans-serif, Verdana; }
+			a, a:visited { color: navy; text-decoration: none; }
+			a:hover { color: orange; }
+		</style>
+	</head>
+	<body>
+		<h1>Multiplayer Box2DWeb Demo</h1>
+		<h2>by <a href="http://chriscavanagh.wordpress.com" target="_blank">Chris Cavanagh</a></h2>
+		<canvas id="canvas" width="600" height="400" style="background-color:#333333;" ></canvas>
+		<div id="debug"></div>
+	</body>
+	<script type="text/javascript" src="Box2dWeb-2.1.a.3.js"></script>
+	<script type="text/javascript" src="/socket.io/socket.io.js"></script>
+	<script type="text/javascript">
+
+		var	b2Vec2			= Box2D.Common.Math.b2Vec2,
+			b2Vec3			= Box2D.Common.Math.b2Vec3,
+			b2Mat22			= Box2D.Common.Math.b2Mat22,
+			b2Transform		= Box2D.Common.Math.b2Transform,
+			b2Math			= Box2D.Common.Math.b2Math;
+			b2AABB			= Box2D.Collision.b2AABB,
+			b2BodyDef		= Box2D.Dynamics.b2BodyDef,
+			b2Body			= Box2D.Dynamics.b2Body,
+			b2FixtureDef	= Box2D.Dynamics.b2FixtureDef,
+			b2Fixture		= Box2D.Dynamics.b2Fixture,
+			b2World			= Box2D.Dynamics.b2World,
+			b2MassData		= Box2D.Collision.Shapes.b2MassData,
+			b2PolygonShape	= Box2D.Collision.Shapes.b2PolygonShape,
+			b2CircleShape	= Box2D.Collision.Shapes.b2CircleShape,
+			b2DebugDraw		= Box2D.Dynamics.b2DebugDraw,
+			b2MouseJointDef	= Box2D.Dynamics.Joints.b2MouseJointDef;
+
+		var world = new b2World(
+			new b2Vec2( 0, 10 ),	// Gravity
+			true					// Allow sleep
+		);
+
+		var indexedBodies = [];
+		var jointQueue = [];
+		var socket = io.connect();
+
+		socket.on( 'bodies', function( data )
+		{
+			init( data );
+		} );
+
+		socket.on( 'addJoint', function( data )
+		{
+			jointQueue.push( function()
+			{
+				var bodyInfo = indexedBodies[ data.I ];
+
+				if ( bodyInfo.Joints[ data.C ] == null )
+				{
+					var transform = bodyInfo.Body.GetTransform();
+					var rot = transform.R;
+					var pos = transform.position;
+
+					var unnorm = b2Math.MulMV( rot, new b2Vec2( data.X, data.Y ) );
+					var mv = b2Math.AddVV( unnorm, pos );
+
+					var md = new b2MouseJointDef();
+					md.bodyA = world.GetGroundBody();
+					md.bodyB = bodyInfo.Body;
+					md.target.Set( mv.x, mv.y );
+					md.collideConnected = true;
+					md.maxForce = 300.0 * bodyInfo.Body.GetMass();
+					var joint = world.CreateJoint( md );
+					bodyInfo.Body.SetAwake( true );
+
+					bodyInfo.Joints[ data.C ] = joint;
+				}
+			} );
+		} );
+
+		socket.on( 'removeJoint', function( data )
+		{
+			jointQueue.push( function()
+			{
+				var bodyInfo = indexedBodies[ data.I ];
+
+				world.DestroyJoint( bodyInfo.Joints[ data.C ] );
+
+				delete bodyInfo.Joints[ data.C ];
+			} );
+		} );
+
+		socket.on( 'moveJoint', function( data )
+		{
+			jointQueue.push( function()
+			{
+				var bodyInfo = indexedBodies[ data.I ];
+
+				bodyInfo.Joints[ data.C ].SetTarget( new b2Vec2( data.X, data.Y ) );
+			} );
+		} );
+
+		function Log( message )
+		{
+			var element = document.getElementById( "debug" );
+			element.innerHTML = "<div>" + message + "</div>" + element.innerHTML;
+		}
+
+		function init( data )
+		{
+			var fixDef = new b2FixtureDef;
+			fixDef.density = 1.0;
+			fixDef.friction = 0.5;
+			fixDef.restitution = 0.2;
+
+			var bodyDef = new b2BodyDef;
+
+			// Create ground
+			bodyDef.type = b2Body.b2_staticBody;
+			fixDef.shape = new b2PolygonShape;
+			fixDef.shape.SetAsBox(20, 2);
+			bodyDef.position.Set(10, 400 / 30 + 1.8);
+			world.CreateBody(bodyDef).CreateFixture(fixDef);
+			bodyDef.position.Set(10, -1.8);
+			world.CreateBody(bodyDef).CreateFixture(fixDef);
+			fixDef.shape.SetAsBox(2, 14);
+			bodyDef.position.Set(-1.8, 13);
+			world.CreateBody(bodyDef).CreateFixture(fixDef);
+			bodyDef.position.Set(21.8, 13);
+			world.CreateBody(bodyDef).CreateFixture(fixDef);
+
+			// Create some objects
+			bodyDef.type = b2Body.b2_dynamicBody;
+
+			indexedBodies = [];
+
+			for ( var k in data )
+			{
+				var b = data[ k ];
+
+				if ( b.T == 'P' )
+				{
+					fixDef.shape = new b2PolygonShape;
+					fixDef.shape.SetAsBox( b.W, b.H );
+				}
+				else
+				{
+					fixDef.shape = new b2CircleShape( b.R );
+				}
+
+				bodyDef.userData = b.I;
+				bodyDef.position.x = b.X;
+				bodyDef.position.y = b.Y;
+				bodyDef.angle = b.A;
+
+				var body = world.CreateBody( bodyDef );
+				body.CreateFixture( fixDef );
+
+				indexedBodies[ b.I ] = { Body: body, Joints: [] };
+			}
+
+			// Setup debug draw
+			var debugDraw = new b2DebugDraw();
+			debugDraw.SetSprite(document.getElementById("canvas").getContext("2d"));
+			debugDraw.SetDrawScale(30.0);
+			debugDraw.SetFillAlpha(0.5);
+			debugDraw.SetLineThickness(1.0);
+			debugDraw.SetFlags(b2DebugDraw.e_shapeBit | b2DebugDraw.e_jointBit);
+			world.SetDebugDraw(debugDraw);
+
+			window.setInterval(update, 1000 / 60);
+
+			// Mouse
+
+			var mouseX, mouseY, mousePVec, isMouseDown, selectedBody, mouseJoint, netJoint;
+			var canvasPosition = getElementPosition(document.getElementById("canvas"));
+
+			document.addEventListener("mousedown", function( e )
+			{
+				isMouseDown = true;
+				handleMouseMove(e);
+				document.addEventListener("mousemove", handleMouseMove, true);
+			}, true);
+         
+			document.addEventListener("mouseup", function()
+			{
+				document.removeEventListener("mousemove", handleMouseMove, true);
+				isMouseDown = false;
+				mouseX = undefined;
+				mouseY = undefined;
+			}, true);
+         
+			function handleMouseMove( e )
+			{
+				mouseX = parseFloat( (e.clientX - canvasPosition.x) / 30.0 );
+				mouseY = parseFloat( (e.clientY - canvasPosition.y) / 30.0 );
+			};
+         
+			function getBodyAtMouse()
+			{
+				mousePVec = new b2Vec2(mouseX, mouseY);
+				var aabb = new b2AABB();
+				aabb.lowerBound.Set(mouseX - 0.001, mouseY - 0.001);
+				aabb.upperBound.Set(mouseX + 0.001, mouseY + 0.001);
+
+				// Query the world for overlapping shapes.
+
+				selectedBody = null;
+				world.QueryAABB(getBodyCB, aabb);
+				return selectedBody;
+			}
+
+			function getBodyCB( fixture )
+			{
+				if ( fixture.GetBody().GetType() != b2Body.b2_staticBody )
+				{
+					if ( fixture.GetShape().TestPoint(fixture.GetBody().GetTransform(), mousePVec ) )
+					{
+						selectedBody = fixture.GetBody();
+						return false;
+					}
+				}
+
+				return true;
+			}
+
+			// Update
+
+			function update()
+			{
+				while ( jointQueue.length > 0 )
+				{
+					jointQueue[ 0 ]();
+					jointQueue.splice( 0, 1 );
+				}
+
+				if ( isMouseDown && (!mouseJoint) )
+				{
+					var body = getBodyAtMouse();
+
+					if ( body )
+					{
+						var md = new b2MouseJointDef();
+						md.bodyA = world.GetGroundBody();
+						md.bodyB = body;
+						md.target.Set(mouseX, mouseY);
+						md.collideConnected = true;
+						md.maxForce = 300.0 * body.GetMass();
+						mouseJoint = world.CreateJoint(md);
+						body.SetAwake(true);
+
+						var transform = body.GetTransform();
+						var rot = transform.R.GetInverse( new b2Mat22() );
+						var pos = transform.position; //.GetNegative( new b2Vec2() );
+						var inv = new b2Transform( pos, rot );
+
+						var mv = b2Math.SubtractVV( new b2Vec2( mouseX, mouseY ), pos );
+						var norm = b2Math.MulMV( rot, mv );
+
+						socket.emit( "addJoint",
+						{
+							X: norm.x,
+							Y: norm.y,
+							I: mouseJoint.GetBodyB().GetUserData(),
+							C: socket.socket.sessionid
+						} );
+					}
+				}
+
+				if ( mouseJoint )
+				{
+					if ( isMouseDown )
+					{
+						var target = mouseJoint.GetTarget();
+
+						if ( target.x != mouseX || target.y != mouseY )
+						{
+							mouseJoint.SetTarget(new b2Vec2(mouseX, mouseY));
+							socket.emit( "moveJoint",
+							{
+								X: mouseX,
+								Y: mouseY,
+								I: mouseJoint.GetBodyB().GetUserData(),
+								C: socket.socket.sessionid
+							} );
+						}
+					}
+					else
+					{
+						world.DestroyJoint(mouseJoint);
+
+						socket.emit( "removeJoint",
+						{
+							I: mouseJoint.GetBodyB().GetUserData(),
+							C: socket.socket.sessionid
+						} );
+
+						mouseJoint = null;
+					}
+				}
+
+				world.Step( 1 / 60, 10, 10 );
+				world.DrawDebugData();
+				world.ClearForces();
+
+				UpdateSleeping();
+			};
+         
+			// Helpers
+
+			// http://js-tut.aardon.de/js-tut/tutorial/position.html
+			function getElementPosition(element)
+			{
+				var elem=element, tagname="", x=0, y=0;
+
+				while((typeof(elem) == "object") && (typeof(elem.tagName) != "undefined"))
+				{
+					y += elem.offsetTop;
+					x += elem.offsetLeft;
+					tagname = elem.tagName.toUpperCase();
+
+					if(tagname == "BODY")
+					elem=0;
+
+					if(typeof(elem) == "object")
+					{
+						if(typeof(elem.offsetParent) == "object")
+						elem = elem.offsetParent;
+					}
+				}
+
+				return {x: x, y: y};
+			}
+
+			function UpdateSleeping()
+			{
+				for ( var bKey in indexedBodies )
+				{
+					var bodyInfo = indexedBodies[ bKey ];
+					var body = bodyInfo.Body;
+					var isAwake = body.IsAwake();
+
+					if ( isAwake != bodyInfo.IsAwake )
+					{
+						bodyInfo.IsAwake = isAwake;
+
+						if ( !isAwake )
+						{
+							socket.emit( "sleeping",
+							{
+								I: bKey,
+								C: socket.socket.sessionid,
+								P: body.GetPosition(),
+								A: body.GetAngle()
+							} );
+						}
+					}
+				}
+			}
+		};
+
+	</script>
+   
+</html>
