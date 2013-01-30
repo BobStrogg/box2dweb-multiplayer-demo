@@ -9,7 +9,7 @@ var updates = [];
 //
 // Create a node-static server instance to serve the './public' folder
 //
-var fileServer = new static.Server( '/home/pi/Node/pi-physics/public' );
+var fileServer = new static.Server( './public' );
 
 var httpServer = http.createServer( function( request, response )
 {
