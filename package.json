@@ -22,10 +22,12 @@
     "socket"
   ],
   "dependencies" : {
-    "socket.io" :  "0.9.x"
+    "socket.io" :  "0.9.x",
+    "node-static" : "0.6.x"
   },
   "bundledDependencies": [
-    "socket.io"
+    "socket.io",
+    "node-static"
   ],  
   "license": "MIT",
   "engines": {
