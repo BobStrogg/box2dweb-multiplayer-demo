@@ -1,7 +1,7 @@
 var static = require( 'node-static' );
 var http = require( 'http' );
 var sio = require( 'socket.io' );
-var sys = require( 'sys' );
+var util = require( 'util' );
 
 var bodies = CreateBodies();
 var updates = [];
@@ -20,7 +20,7 @@ var httpServer = http.createServer( function( request, response )
             if ( err )
             {
                 // There was an error serving the file
-                sys.error( "Error serving " + request.url + " - " + err.message );
+                util.error( "Error serving " + request.url + " - " + err.message );
 
                 // Respond to the client
                 response.writeHead( err.status, err.headers );
